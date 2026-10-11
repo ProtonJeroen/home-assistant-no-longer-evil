@@ -1,0 +1,12 @@
+{
+  "domain": "no_longer_evil",
+  "name": "No Longer Evil Thermostat",
+  "codeowners": ["@ProtonJeroen"],
+  "config_flow": true,
+  "documentation": "https://github.com/ProtonJeroen/home-assistant-no-longer-evil",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/ProtonJeroen/home-assistant-no-longer-evil/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

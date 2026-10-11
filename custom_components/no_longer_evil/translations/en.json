@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {"user": {"title": "No Longer Evil", "description": "Enter a hosted service API key with read and write scopes.", "data": {"api_key": "API key"}}},
+    "error": {"invalid_auth": "Invalid API key or missing read permission.", "cannot_connect": "Unable to connect. Check the service and try again."},
+    "abort": {"already_configured": "This API key is already configured.", "reauth_successful": "Authentication updated successfully."}
+  },
+  "entity": {"sensor": {
+    "current_humidity": {"name": "Humidity"},
+    "backplate_temperature": {"name": "Backplate temperature"},
+    "battery_level": {"name": "Battery level"},
+    "time_to_target": {"name": "Time to target"}
+  }}
+}
