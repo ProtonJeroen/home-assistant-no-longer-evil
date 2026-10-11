@@ -73,6 +73,21 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
             modes.append(HVACMode.COOL)
         if HVACMode.HEAT in modes and HVACMode.COOL in modes:
             modes.append(HVACMode.HEAT_COOL)
+        # Some hosted responses omit equipment flags. The reported active mode
+        # is still usable; do not infer any other equipment capabilities.
+        active = self.hvac_mode
+        required = {
+            HVACMode.HEAT: ("can_heat",),
+            HVACMode.COOL: ("can_cool",),
+            HVACMode.HEAT_COOL: ("can_heat", "can_cool"),
+        }.get(active, ())
+        if (
+            required
+            and active not in modes
+            and any(key not in self.shared for key in required)
+            and not any(self.shared.get(key) is False for key in required)
+        ):
+            modes.append(active)
         return modes
 
     @property

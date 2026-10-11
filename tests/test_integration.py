@@ -127,6 +127,43 @@ async def test_heat_capabilities_and_command():
         await entity.async_set_hvac_mode(HVACMode.COOL)
 
 
+async def test_active_cool_mode_without_equipment_flags():
+    entity = climate(
+        {"target_temperature_type": "cool", "target_temperature": 19.86612}
+    )
+    assert entity.hvac_mode == HVACMode.COOL
+    assert entity.hvac_modes == [HVACMode.OFF, HVACMode.COOL]
+    assert entity.target_temperature == 19.86612
+    await entity.async_set_temperature(temperature=21)
+    entity.coordinator.api.command.assert_awaited_once_with(
+        "id", "temperature", {"value": 21, "mode": "cool", "scale": "C"}
+    )
+    with pytest.raises(HomeAssistantError):
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+
+
+@pytest.mark.parametrize(
+    "mode,expected", [("heat", HVACMode.HEAT), ("range", HVACMode.HEAT_COOL)]
+)
+def test_other_reported_modes_without_flags(mode, expected):
+    assert climate({"target_temperature_type": mode}).hvac_modes == [
+        HVACMode.OFF,
+        expected,
+    ]
+
+
+def test_missing_mode_does_not_infer_equipment():
+    entity = climate({"target_temperature": 19.86612})
+    assert entity.hvac_mode is None
+    assert entity.hvac_modes == [HVACMode.OFF]
+    assert entity.supported_features == 0
+
+
+def test_explicit_false_capability_is_respected():
+    entity = climate({"target_temperature_type": "cool", "can_cool": False})
+    assert entity.hvac_modes == [HVACMode.OFF]
+
+
 async def test_range_mapping_and_validation():
     entity = climate(
         {"can_heat": True, "can_cool": True, "target_temperature_type": "range"}

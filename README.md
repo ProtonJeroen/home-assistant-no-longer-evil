@@ -36,6 +36,9 @@ is reported when a control is attempted.
 
 - Climate: current and target temperature, HVAC mode and heating/cooling action.
 - Heat and cool controls appear only when `can_heat` / `can_cool` report support.
+- When equipment flags are absent, the explicitly reported active mode remains
+  available for temperature control. No other modes are inferred. If the API
+  also omits the active mode, the climate state remains unknown.
 - Combined heat/cool mode provides low and high setpoints. Temperatures use Celsius
   internally; Home Assistant converts them for your preferred display unit.
 - Optional diagnostic sensors: humidity, backplate temperature, battery level and
