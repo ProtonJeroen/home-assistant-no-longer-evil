@@ -1,6 +1,6 @@
 """Contract and behavior tests using synthetic data, never real credentials."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from homeassistant.components.climate import HVACAction, HVACMode
@@ -99,6 +99,7 @@ async def test_rate_limit_backoff():
 
 def climate(shared):
     coordinator = MagicMock()
+    coordinator.config_entry.options = {}
     coordinator.data = {
         "s": {"info": {"id": "id", "serial": "s"}, "available": True, "shared": shared}
     }
@@ -132,12 +133,11 @@ async def test_active_cool_mode_without_equipment_flags():
         {"target_temperature_type": "cool", "target_temperature": 19.86612}
     )
     assert entity.hvac_mode == HVACMode.COOL
-    assert entity.hvac_modes == [HVACMode.OFF, HVACMode.COOL]
+    assert entity.hvac_modes == [HVACMode.OFF]
     assert entity.target_temperature == 19.86612
-    await entity.async_set_temperature(temperature=21)
-    entity.coordinator.api.command.assert_awaited_once_with(
-        "id", "temperature", {"value": 21, "mode": "cool", "scale": "C"}
-    )
+    with pytest.raises(HomeAssistantError):
+        await entity.async_set_temperature(temperature=21)
+    entity.coordinator.api.command.assert_not_awaited()
     with pytest.raises(HomeAssistantError):
         await entity.async_set_hvac_mode(HVACMode.HEAT)
 
@@ -148,8 +148,25 @@ async def test_active_cool_mode_without_equipment_flags():
 def test_other_reported_modes_without_flags(mode, expected):
     assert climate({"target_temperature_type": mode}).hvac_modes == [
         HVACMode.OFF,
-        expected,
     ]
+
+
+async def test_heating_only_override_controls_and_isolation():
+    entity = climate({"target_temperature_type": "heat", "target_temperature": 21})
+    entity.coordinator.config_entry.options = {"heating_only": ["s"]}
+    assert entity.hvac_modes == [HVACMode.OFF, HVACMode.HEAT]
+    await entity.async_set_temperature(temperature=22)
+    entity.coordinator.api.command.assert_awaited_once_with(
+        "id", "temperature", {"value": 22, "mode": "heat", "scale": "C"}
+    )
+    for mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
+        with pytest.raises(HomeAssistantError):
+            await entity.async_set_hvac_mode(mode)
+    entity.coordinator.data["s"]["shared"]["target_temperature_type"] = "cool"
+    assert entity.hvac_mode is None
+    assert entity.target_temperature is None
+    entity.coordinator.config_entry.options = {"heating_only": ["other"]}
+    assert entity.hvac_modes == [HVACMode.OFF]
 
 
 def test_missing_mode_does_not_infer_equipment():
@@ -223,3 +240,22 @@ async def test_config_flow_invalid_and_success():
         result = await flow.async_step_user({"api_key": "nle_test_placeholder"})
         assert result["type"] == "create_entry"
         assert "nle_" not in flow.async_set_unique_id.call_args.args[0]
+
+
+async def test_options_save_heating_only_per_device():
+    from custom_components.no_longer_evil.config_flow import ThermostatOptionsFlow
+
+    entry = MagicMock()
+    entry.options = {"heating_only": ["unavailable", "s"]}
+    entry.runtime_data.data = {"s": {}, "other": {}}
+    flow = ThermostatOptionsFlow()
+    with patch.object(
+        ThermostatOptionsFlow,
+        "config_entry",
+        new_callable=PropertyMock,
+        return_value=entry,
+    ):
+        form = await flow.async_step_init()
+        assert form["type"] == "form"
+        result = await flow.async_step_init({"s": False, "other": True})
+    assert result["data"] == {"heating_only": ["other", "unavailable"]}
