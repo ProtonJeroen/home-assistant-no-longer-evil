@@ -66,6 +66,8 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
 
     @property
     def hvac_modes(self):
+        if self.heating_only:
+            return [HVACMode.OFF, HVACMode.HEAT]
         modes = [HVACMode.OFF]
         if self.shared.get("can_heat") is True:
             modes.append(HVACMode.HEAT)
@@ -73,28 +75,22 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
             modes.append(HVACMode.COOL)
         if HVACMode.HEAT in modes and HVACMode.COOL in modes:
             modes.append(HVACMode.HEAT_COOL)
-        # Some hosted responses omit equipment flags. The reported active mode
-        # is still usable; do not infer any other equipment capabilities.
-        active = self.hvac_mode
-        required = {
-            HVACMode.HEAT: ("can_heat",),
-            HVACMode.COOL: ("can_cool",),
-            HVACMode.HEAT_COOL: ("can_heat", "can_cool"),
-        }.get(active, ())
-        if (
-            required
-            and active not in modes
-            and any(key not in self.shared for key in required)
-            and not any(self.shared.get(key) is False for key in required)
-        ):
-            modes.append(active)
         return modes
 
     @property
+    def heating_only(self):
+        return self.serial in self.coordinator.config_entry.options.get(
+            "heating_only", []
+        )
+
+    @property
     def hvac_mode(self):
-        return READ_MODES.get(
+        mode = READ_MODES.get(
             str(self.shared.get("target_temperature_type", "")).lower()
         )
+        if self.heating_only and mode not in (HVACMode.OFF, HVACMode.HEAT):
+            return None
+        return mode
 
     @property
     def supported_features(self):

@@ -25,6 +25,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        return ThermostatOptionsFlow()
+
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:
@@ -61,3 +65,28 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth(self, entry_data):
         """Replace a revoked or expired key."""
         return await self.async_step_user()
+
+
+class ThermostatOptionsFlow(config_entries.OptionsFlow):
+    """Configure a heating-only override separately for each thermostat."""
+
+    async def async_step_init(self, user_input=None):
+        devices = self.config_entry.runtime_data.data
+        if user_input is not None:
+            selected = set(self.config_entry.options.get("heating_only", []))
+            for serial in devices:
+                if user_input.get(serial, False):
+                    selected.add(serial)
+                else:
+                    selected.discard(serial)
+            return self.async_create_entry(
+                title="", data={"heating_only": sorted(selected)}
+            )
+        selected = self.config_entry.options.get("heating_only", [])
+        schema = vol.Schema(
+            {
+                vol.Optional(serial, default=serial in selected): bool
+                for serial in devices
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
