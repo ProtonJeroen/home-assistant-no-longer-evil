@@ -32,6 +32,17 @@ class NoLongerEvilApi:
         self._next_request = 0.0
 
     async def request(self, method, path, body=None):
+        """Retry a rejected read once before requiring reauthentication."""
+        try:
+            return await self._request_once(method, path, body)
+        except AuthenticationError:
+            if method != "GET":
+                raise
+        # Release the request lock while waiting; never replay control commands.
+        await asyncio.sleep(10)
+        return await self._request_once(method, path, body)
+
+    async def _request_once(self, method, path, body=None):
         """Serialize and pace calls below the documented 20/minute limit."""
         async with self._lock:
             await asyncio.sleep(max(0, self._next_request - time.monotonic()))
