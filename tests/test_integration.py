@@ -38,9 +38,53 @@ async def test_safe_http_errors(status, error):
     session = MagicMock()
     session.request.return_value = response(status)
     api = NoLongerEvilApi(session, "test-only-placeholder")
-    with pytest.raises(error) as caught:
+    with (
+        patch(
+            "custom_components.no_longer_evil.api.asyncio.sleep", new_callable=AsyncMock
+        ),
+        pytest.raises(error) as caught,
+    ):
         await api.devices()
     assert "placeholder" not in str(caught.value)
+
+
+async def test_transient_authentication_recovers_with_same_key():
+    session = MagicMock()
+    session.request.side_effect = [
+        response(401),
+        response(payload={"devices": [{"id": "id", "serial": "serial"}]}),
+    ]
+    api = NoLongerEvilApi(session, "test-only-placeholder")
+    with patch(
+        "custom_components.no_longer_evil.api.asyncio.sleep", new_callable=AsyncMock
+    ) as sleep:
+        assert (await api.devices())[0]["serial"] == "serial"
+    sleep.assert_any_await(10)
+    assert session.request.call_count == 2
+    assert session.request.call_args_list[0] == session.request.call_args_list[1]
+
+
+async def test_persistent_authentication_failure_is_bounded():
+    session = MagicMock()
+    session.request.return_value = response(401)
+    api = NoLongerEvilApi(session, "test-only-placeholder")
+    with (
+        patch(
+            "custom_components.no_longer_evil.api.asyncio.sleep", new_callable=AsyncMock
+        ),
+        pytest.raises(AuthenticationError),
+    ):
+        await api.status("id", "serial")
+    assert session.request.call_count == 2
+
+
+async def test_control_command_is_not_replayed_after_authentication_failure():
+    session = MagicMock()
+    session.request.return_value = response(401)
+    api = NoLongerEvilApi(session, "test-only-placeholder")
+    with pytest.raises(AuthenticationError):
+        await api.command("id", "mode", {"mode": "heat"})
+    assert session.request.call_count == 1
 
 
 async def test_contract_and_headers():
