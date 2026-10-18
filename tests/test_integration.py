@@ -331,8 +331,8 @@ async def test_unapplied_temperature_write_emits_diagnostic_warning(caplog):
     ):
         await entity.async_set_temperature(temperature=21.5)
     entity.coordinator.api.command.assert_awaited_once()
-    assert "still reports setpoint" in caplog.text
-    assert entity.coordinator.async_request_refresh.await_count == 2
+    assert "has not yet reported requested setpoint" in caplog.text
+    assert entity.coordinator.async_request_refresh.await_count == 3
 
 
 async def test_applied_temperature_write_has_no_mismatch_warning(caplog):
@@ -351,4 +351,29 @@ async def test_applied_temperature_write_has_no_mismatch_warning(caplog):
         new_callable=AsyncMock,
     ):
         await entity.async_set_temperature(temperature=21.5)
-    assert "still reports setpoint" not in caplog.text
+    assert "has not yet reported requested setpoint" not in caplog.text
+
+
+async def test_delayed_setpoint_confirmation_avoids_warning(caplog):
+    entity = climate({
+        "can_heat": True,
+        "target_temperature_type": "heat",
+        "target_temperature": 20,
+    })
+    calls = 0
+
+    async def refresh():
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            entity.coordinator.data["s"]["shared"]["target_temperature"] = 21
+
+    entity.coordinator.async_request_refresh = AsyncMock(side_effect=refresh)
+    with patch(
+        "custom_components.no_longer_evil.climate.asyncio.sleep",
+        new_callable=AsyncMock,
+    ) as sleep:
+        await entity.async_set_temperature(temperature=21)
+    assert sleep.await_count == 2
+    assert "has not yet reported requested setpoint" not in caplog.text
+    entity.coordinator.api.command.assert_awaited_once()
