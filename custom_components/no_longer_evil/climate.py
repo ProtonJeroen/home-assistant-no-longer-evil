@@ -207,16 +207,28 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
         if mode != self.hvac_mode:
             await self.async_set_hvac_mode(mode)
         await self._command(endpoint, body)
-        # The hosted API acknowledges a command before the physical thermostat
-        # necessarily applies it. Verify via a fresh status read, without
-        # blindly retrying a command that might already be in flight.
-        await asyncio.sleep(5)
-        await self.coordinator.async_request_refresh()
-        actual = self.shared.get("target_temperature")
-        if mode in (HVACMode.HEAT, HVACMode.COOL) and isinstance(actual, (int, float)):
-            if abs(actual - body["value"]) > 0.26:
-                LOGGER.warning(
-                    "Thermostat %s accepted a temperature command but still reports "
-                    "setpoint %s instead of %s; check API write scope and device sync",
-                    self.serial[-4:], actual, body["value"],
-                )
+        # The cloud can report an older setpoint for several seconds after
+        # acknowledging a write. Allow two delayed reads before warning.
+        # Never replay the command: a successful response may be in flight.
+        if mode not in (HVACMode.HEAT, HVACMode.COOL):
+            return
+        expected = body["value"]
+        for delay in (15, 15):
+            await asyncio.sleep(delay)
+            try:
+                await self.coordinator.async_request_refresh()
+            except ApiError:
+                LOGGER.debug("Setpoint verification deferred: API unavailable")
+                return
+            if not self.available:
+                LOGGER.debug("Setpoint verification deferred: thermostat unavailable")
+                return
+            actual = self.shared.get("target_temperature")
+            if isinstance(actual, (int, float)) and abs(actual - expected) <= 0.26:
+                return
+        # The device may still be syncing; avoid claiming a rejected write.
+        LOGGER.warning(
+            "Thermostat %s has not yet reported requested setpoint %s "
+            "after delayed verification (last reported: %s)",
+            self.serial[-4:], expected, self.shared.get("target_temperature"),
+        )
