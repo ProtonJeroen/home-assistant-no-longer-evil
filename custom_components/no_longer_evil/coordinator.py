@@ -37,7 +37,12 @@ class ThermostatCoordinator(DataUpdateCoordinator):
                 except AuthenticationError:
                     raise
                 except ApiError:
-                    result[device["serial"]] = {"info": device, "available": False}
+                    previous = (self.data or {}).get(device["serial"], {})
+                    result[device["serial"]] = {
+                        **previous,
+                        "info": device,
+                        "available": False,
+                    }
                 else:
                     result[device["serial"]] = {
                         "info": device,

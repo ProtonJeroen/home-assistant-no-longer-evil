@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
-from homeassistant.components.climate import HVACAction, HVACMode
+from homeassistant.components.climate import ClimateEntityFeature, HVACAction, HVACMode
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.no_longer_evil.api import (
@@ -207,8 +207,8 @@ async def test_heating_only_override_controls_and_isolation():
         with pytest.raises(HomeAssistantError):
             await entity.async_set_hvac_mode(mode)
     entity.coordinator.data["s"]["shared"]["target_temperature_type"] = "cool"
-    assert entity.hvac_mode is None
-    assert entity.target_temperature is None
+    assert entity.hvac_mode == HVACMode.COOL
+    assert entity.target_temperature == 21
     entity.coordinator.config_entry.options = {"heating_only": ["other"]}
     assert entity.hvac_modes == [HVACMode.OFF]
 
@@ -217,7 +217,7 @@ def test_missing_mode_does_not_infer_equipment():
     entity = climate({"target_temperature": 19.86612})
     assert entity.hvac_mode is None
     assert entity.hvac_modes == [HVACMode.OFF]
-    assert entity.supported_features == 0
+    assert entity.supported_features == ClimateEntityFeature.TARGET_TEMPERATURE
 
 
 def test_explicit_false_capability_is_respected():
@@ -303,3 +303,17 @@ async def test_options_save_heating_only_per_device():
         assert form["type"] == "form"
         result = await flow.async_step_init({"s": False, "other": True})
     assert result["data"] == {"heating_only": ["other", "unavailable"]}
+
+def test_heating_only_cooling_state_keeps_target_and_blocks_cooling_commands():
+    entity = climate({"target_temperature_type": "cool", "target_temperature": 20})
+    entity.coordinator.config_entry.options = {"heating_only": ["s"]}
+    assert entity.hvac_mode == HVACMode.COOL
+    assert entity.target_temperature == 20
+    assert entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
+
+
+def test_off_mode_retains_last_reported_setpoint():
+    entity = climate({"target_temperature_type": "off", "target_temperature": 20})
+    assert entity.hvac_mode == HVACMode.OFF
+    assert entity.target_temperature == 20
+    assert entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE

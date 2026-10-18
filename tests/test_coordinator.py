@@ -59,3 +59,16 @@ async def test_setup_and_unload():
         cls.return_value.async_config_entry_first_refresh.assert_awaited_once()
         assert await async_unload_entry(hass, entry)
         hass.config_entries.async_unload_platforms.assert_awaited_once()
+
+async def test_transient_device_error_preserves_last_good_state():
+    api = MagicMock()
+    api.devices = AsyncMock(return_value=[{"id": "a", "serial": "a"}])
+    api.status = AsyncMock(side_effect=ApiError("temporary"))
+    coordinator = ThermostatCoordinator(MagicMock(), MagicMock(), api)
+    coordinator.async_set_updated_data({
+        "a": {"info": {"id": "a", "serial": "a"}, "available": True,
+              "shared": {"target_temperature": 20}, "device": {}}
+    })
+    data = await coordinator._async_update_data()
+    assert data["a"]["available"] is False
+    assert data["a"]["shared"]["target_temperature"] == 20
