@@ -41,7 +41,9 @@ class ThermostatCoordinator(DataUpdateCoordinator):
                     result[device["serial"]] = {
                         **previous,
                         "info": device,
-                        # Keep the last valid snapshot through a transient\n                        # cloud read error; do not turn the card unknown.\n                        "available": previous.get("available", False),
+                        # Keep the last valid snapshot through a transient
+                        # cloud read error; do not turn the card unknown.
+                        "available": previous.get("available", False),
                     }
                 else:
                     result[device["serial"]] = {
