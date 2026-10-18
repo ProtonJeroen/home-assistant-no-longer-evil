@@ -1,5 +1,7 @@
 """Climate controls supported by the hosted API."""
 
+import asyncio
+import logging
 import math
 
 from homeassistant.components.climate import (
@@ -34,6 +36,8 @@ HEAT_FIELDS = (
     "hvac_aux_heater_state",
     "hvac_alt_heat_state",
 )
+LOGGER = logging.getLogger(__name__)
+
 COOL_FIELDS = ("hvac_ac_state", "hvac_cool_x2_state", "hvac_cool_x3_state")
 
 
@@ -203,3 +207,16 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
         if mode != self.hvac_mode:
             await self.async_set_hvac_mode(mode)
         await self._command(endpoint, body)
+        # The hosted API acknowledges a command before the physical thermostat
+        # necessarily applies it. Verify via a fresh status read, without
+        # blindly retrying a command that might already be in flight.
+        await asyncio.sleep(5)
+        await self.coordinator.async_request_refresh()
+        actual = self.shared.get("target_temperature")
+        if mode in (HVACMode.HEAT, HVACMode.COOL) and isinstance(actual, (int, float)):
+            if abs(actual - body["value"]) > 0.26:
+                LOGGER.warning(
+                    "Thermostat %s accepted a temperature command but still reports "
+                    "setpoint %s instead of %s; check API write scope and device sync",
+                    self.serial[-4:], actual, body["value"],
+                )
