@@ -317,3 +317,38 @@ def test_off_mode_retains_last_reported_setpoint():
     assert entity.hvac_mode == HVACMode.OFF
     assert entity.target_temperature == 20
     assert entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
+
+
+async def test_unapplied_temperature_write_emits_diagnostic_warning(caplog):
+    entity = climate({
+        "can_heat": True,
+        "target_temperature_type": "heat",
+        "target_temperature": 21,
+    })
+    with patch(
+        "custom_components.no_longer_evil.climate.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        await entity.async_set_temperature(temperature=21.5)
+    entity.coordinator.api.command.assert_awaited_once()
+    assert "still reports setpoint" in caplog.text
+    assert entity.coordinator.async_request_refresh.await_count == 2
+
+
+async def test_applied_temperature_write_has_no_mismatch_warning(caplog):
+    entity = climate({
+        "can_heat": True,
+        "target_temperature_type": "heat",
+        "target_temperature": 21,
+    })
+
+    async def refresh():
+        entity.coordinator.data["s"]["shared"]["target_temperature"] = 21.5
+
+    entity.coordinator.async_request_refresh = AsyncMock(side_effect=refresh)
+    with patch(
+        "custom_components.no_longer_evil.climate.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        await entity.async_set_temperature(temperature=21.5)
+    assert "still reports setpoint" not in caplog.text
