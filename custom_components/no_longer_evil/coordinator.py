@@ -41,7 +41,7 @@ class ThermostatCoordinator(DataUpdateCoordinator):
                     result[device["serial"]] = {
                         **previous,
                         "info": device,
-                        "available": False,
+                        # Keep the last valid snapshot through a transient\n                        # cloud read error; do not turn the card unknown.\n                        "available": previous.get("available", False),
                     }
                 else:
                     result[device["serial"]] = {
@@ -53,4 +53,7 @@ class ThermostatCoordinator(DataUpdateCoordinator):
         except AuthenticationError as err:
             raise ConfigEntryAuthFailed(str(err)) from None
         except ApiError as err:
+            if self.data:
+                LOGGER.debug("Transient inventory poll failed; keeping cached state: %s", err)
+                return self.data
             raise UpdateFailed(str(err)) from None
