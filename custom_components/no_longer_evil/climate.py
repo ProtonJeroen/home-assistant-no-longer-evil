@@ -88,15 +88,19 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
         mode = READ_MODES.get(
             str(self.shared.get("target_temperature_type", "")).lower()
         )
-        if self.heating_only and mode not in (HVACMode.OFF, HVACMode.HEAT):
-            return None
+        # Reflect the real mode even when cooling controls are restricted.
         return mode
 
     @property
     def supported_features(self):
         if self.hvac_mode == HVACMode.HEAT_COOL:
             return ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-        if self.hvac_mode in (HVACMode.HEAT, HVACMode.COOL):
+        if (
+            self.heating_only
+            or self.shared.get("can_heat") is True
+            or self.shared.get("can_cool") is True
+            or self.shared.get("target_temperature") is not None
+        ):
             return ClimateEntityFeature.TARGET_TEMPERATURE
         return ClimateEntityFeature(0)
 
@@ -106,7 +110,7 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
 
     @property
     def target_temperature(self):
-        if self.hvac_mode in (HVACMode.HEAT, HVACMode.COOL):
+        if self.hvac_mode != HVACMode.HEAT_COOL:
             return self.shared.get("target_temperature")
         return None
 
@@ -152,7 +156,9 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
         await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode):
-        if hvac_mode not in self.hvac_modes:
+        if hvac_mode not in self.hvac_modes or (
+            self.heating_only and hvac_mode not in (HVACMode.OFF, HVACMode.HEAT)
+        ):
             raise HomeAssistantError("HVAC mode is not supported by this thermostat")
         await self._command("mode", {"mode": WRITE_MODES[hvac_mode]})
 
