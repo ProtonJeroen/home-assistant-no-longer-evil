@@ -70,5 +70,17 @@ async def test_transient_device_error_preserves_last_good_state():
               "shared": {"target_temperature": 20}, "device": {}}
     })
     data = await coordinator._async_update_data()
-    assert data["a"]["available"] is False
+    assert data["a"]["available"] is True
     assert data["a"]["shared"]["target_temperature"] == 20
+
+
+async def test_transient_inventory_failure_retains_previous_state():
+    api = MagicMock()
+    api.devices = AsyncMock(side_effect=ApiError("temporary"))
+    coordinator = ThermostatCoordinator(MagicMock(), MagicMock(), api)
+    previous = {
+        "a": {"info": {"id": "a", "serial": "a"}, "available": True,
+              "shared": {"target_temperature": 21}, "device": {}}
+    }
+    coordinator.async_set_updated_data(previous)
+    assert await coordinator._async_update_data() == previous
