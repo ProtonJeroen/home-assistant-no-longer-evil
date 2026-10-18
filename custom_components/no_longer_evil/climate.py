@@ -157,7 +157,8 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
             raise HomeAssistantError(str(err)) from None
         except ApiError as err:
             raise HomeAssistantError(str(err)) from None
-        await self.coordinator.async_request_refresh()
+        # Do not block the HA service call on a potentially slow cloud read.
+        # The coordinator continues its normal periodic polling.
 
     async def async_set_hvac_mode(self, hvac_mode):
         if hvac_mode not in self.hvac_modes or (
@@ -207,28 +208,34 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
         if mode != self.hvac_mode:
             await self.async_set_hvac_mode(mode)
         await self._command(endpoint, body)
-        # The cloud can report an older setpoint for several seconds after
-        # acknowledging a write. Allow two delayed reads before warning.
-        # Never replay the command: a successful response may be in flight.
-        if mode not in (HVACMode.HEAT, HVACMode.COOL):
+        # Return to the dashboard as soon as the cloud acknowledges the write.
+        # Verification is advisory and runs outside the service-call lifecycle.
+        if mode in (HVACMode.HEAT, HVACMode.COOL):
+            generation = getattr(self, "_setpoint_generation", 0) + 1
+            self._setpoint_generation = generation
+            self.hass.async_create_background_task(
+                self._verify_setpoint(body["value"], generation),
+                f"no_longer_evil_verify_setpoint_{self.serial[-4:]}",
+            )
+
+    async def _verify_setpoint(self, expected, generation):
+        """Check cloud convergence without delaying or replaying the command."""
+        await asyncio.sleep(20)
+        # Ignore older requests when the user has already changed the target.
+        if generation != self._setpoint_generation:
             return
-        expected = body["value"]
-        for delay in (15, 15):
-            await asyncio.sleep(delay)
-            try:
-                await self.coordinator.async_request_refresh()
-            except ApiError:
-                LOGGER.debug("Setpoint verification deferred: API unavailable")
-                return
-            if not self.available:
-                LOGGER.debug("Setpoint verification deferred: thermostat unavailable")
-                return
-            actual = self.shared.get("target_temperature")
-            if isinstance(actual, (int, float)) and abs(actual - expected) <= 0.26:
-                return
-        # The device may still be syncing; avoid claiming a rejected write.
-        LOGGER.warning(
-            "Thermostat %s has not yet reported requested setpoint %s "
-            "after delayed verification (last reported: %s)",
-            self.serial[-4:], expected, self.shared.get("target_temperature"),
-        )
+        try:
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            # A failed verification is not a failed write. The normal poll
+            # cycle will retry; do not create a noisy dashboard error.
+            LOGGER.debug("Deferred thermostat status refresh failed: %s", type(err).__name__)
+            return
+        if generation != self._setpoint_generation or not self.available:
+            return
+        actual = self.shared.get("target_temperature")
+        if isinstance(actual, (int, float)) and abs(actual - expected) > 0.26:
+            LOGGER.debug(
+                "Thermostat %s cloud setpoint still syncing: requested %s, reported %s",
+                self.serial[-4:], expected, actual,
+            )
