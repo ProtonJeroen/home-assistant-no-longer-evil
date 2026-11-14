@@ -178,8 +178,23 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
         return value
 
     async def async_set_temperature(self, **kwargs):
-        mode = kwargs.get("hvac_mode", self.hvac_mode)
+        explicit_mode = kwargs.get("hvac_mode")
+        mode = explicit_mode if explicit_mode is not None else self.hvac_mode
+        if mode not in self.hvac_modes and explicit_mode is None:
+            # A cached cloud snapshot may contain an old COOL/OFF mode after
+            # the physical thermostat was changed back to HEAT. Refresh once
+            # before rejecting a dashboard setpoint command.
+            try:
+                await self.coordinator.async_request_refresh()
+            except Exception as err:
+                LOGGER.debug("Could not refresh HVAC mode before setpoint: %s", type(err).__name__)
+            mode = self.hvac_mode
         if mode not in self.hvac_modes:
+            if self.heating_only and mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
+                raise HomeAssistantError(
+                    "Thermostat reports cooling mode while heating-only is enabled. "
+                    "Select Heat on the thermostat before changing the setpoint."
+                )
             raise HomeAssistantError("HVAC mode is not supported by this thermostat")
         if mode == HVACMode.HEAT_COOL:
             low = self._temperature(kwargs.get("target_temp_low"))
