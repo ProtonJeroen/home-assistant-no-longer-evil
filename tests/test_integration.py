@@ -365,3 +365,36 @@ async def test_superseded_setpoint_verification_does_not_poll():
         entity.coordinator.async_request_refresh.assert_not_awaited()
         await pending[1]
     entity.coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_stale_cool_mode_refreshes_to_heat_before_setting_temperature():
+    entity = climate({"target_temperature_type": "cool", "target_temperature": 20})
+    entity.coordinator.config_entry.options = {"heating_only": ["s"]}
+
+    async def refresh():
+        entity.coordinator.data["s"]["shared"]["target_temperature_type"] = "heat"
+
+    entity.coordinator.async_request_refresh = AsyncMock(side_effect=refresh)
+    await entity.async_set_temperature(temperature=21)
+    entity.coordinator.async_request_refresh.assert_awaited_once()
+    entity.coordinator.api.command.assert_awaited_once_with(
+        "id", "temperature", {"value": 21, "mode": "heat", "scale": "C"}
+    )
+
+
+async def test_actual_cool_mode_is_not_silently_switched_to_heat():
+    entity = climate({"target_temperature_type": "cool", "target_temperature": 20})
+    entity.coordinator.config_entry.options = {"heating_only": ["s"]}
+    with pytest.raises(HomeAssistantError, match="Select Heat"):
+        await entity.async_set_temperature(temperature=21)
+    entity.coordinator.async_request_refresh.assert_awaited_once()
+    entity.coordinator.api.command.assert_not_awaited()
+
+
+async def test_explicit_unsupported_cool_mode_is_not_rewritten():
+    entity = climate({"target_temperature_type": "heat", "target_temperature": 20})
+    entity.coordinator.config_entry.options = {"heating_only": ["s"]}
+    with pytest.raises(HomeAssistantError, match="Select Heat"):
+        await entity.async_set_temperature(temperature=21, hvac_mode=HVACMode.COOL)
+    entity.coordinator.async_request_refresh.assert_not_awaited()
+    entity.coordinator.api.command.assert_not_awaited()
