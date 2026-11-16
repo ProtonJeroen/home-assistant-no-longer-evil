@@ -98,19 +98,20 @@ async def test_partial_status_preserves_recent_setpoint_then_expires(caplog):
         {"shared": {"target_temperature": 21.5, "current_temperature": 21}, "device": {}},
     ])
     coordinator = ThermostatCoordinator(MagicMock(), MagicMock(), api)
-    with patch("custom_components.no_longer_evil.coordinator.time.monotonic", side_effect=[
-        100.0, 110.0, 100.0 + TARGET_GRACE_SECONDS + 1, 500.0
-    ]):
+    with patch("custom_components.no_longer_evil.coordinator.time.monotonic", return_value=100.0) as clock:
         first = await coordinator._async_update_data()
         assert first["a"]["shared"]["target_temperature"] == 20.5
         coordinator.async_set_updated_data(first)
+        clock.return_value = 110.0
         second = await coordinator._async_update_data()
         assert second["a"]["shared"]["target_temperature"] == 20.5
         assert second["a"]["shared"]["current_temperature"] == 20.7
         coordinator.async_set_updated_data(second)
+        clock.return_value = 100.0 + TARGET_GRACE_SECONDS + 1
         third = await coordinator._async_update_data()
         assert "target_temperature" not in third["a"]["shared"]
         coordinator.async_set_updated_data(third)
+        clock.return_value = 500.0
         fourth = await coordinator._async_update_data()
         assert fourth["a"]["shared"]["target_temperature"] == 21.5
     assert "API status omitted target_temperature" in caplog.text
