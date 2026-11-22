@@ -216,3 +216,61 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
             mode = self.hvac_mode
         if mode not in self.hvac_modes:
             self._reject_unsupported_mode(mode)
+        if mode == HVACMode.HEAT_COOL:
+            low = self._temperature(kwargs.get("target_temp_low"))
+            high = self._temperature(kwargs.get("target_temp_high"))
+            if low >= high:
+                raise HomeAssistantError(
+                    "Low temperature must be below high temperature"
+                )
+            endpoint, body = (
+                "temperature/range",
+                {"low": low, "high": high, "scale": "C"},
+            )
+        elif mode in (HVACMode.HEAT, HVACMode.COOL):
+            endpoint, body = (
+                "temperature",
+                {
+                    "value": self._temperature(kwargs.get(ATTR_TEMPERATURE)),
+                    "mode": WRITE_MODES[mode],
+                    "scale": "C",
+                },
+            )
+        else:
+            raise HomeAssistantError(
+                "Select heat, cool or heat/cool before setting temperature"
+            )
+        if mode != self.hvac_mode:
+            await self.async_set_hvac_mode(mode)
+        await self._command(endpoint, body)
+        # Return to the dashboard as soon as the cloud acknowledges the write.
+        # Verification is advisory and runs outside the service-call lifecycle.
+        if mode in (HVACMode.HEAT, HVACMode.COOL):
+            generation = getattr(self, "_setpoint_generation", 0) + 1
+            self._setpoint_generation = generation
+            self.hass.async_create_background_task(
+                self._verify_setpoint(body["value"], generation),
+                f"no_longer_evil_verify_setpoint_{self.serial[-4:]}",
+            )
+
+    async def _verify_setpoint(self, expected, generation):
+        """Check cloud convergence without delaying or replaying the command."""
+        await asyncio.sleep(20)
+        # Ignore older requests when the user has already changed the target.
+        if generation != self._setpoint_generation:
+            return
+        try:
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            # A failed verification is not a failed write. The normal poll
+            # cycle will retry; do not create a noisy dashboard error.
+            LOGGER.debug("Deferred thermostat status refresh failed: %s", type(err).__name__)
+            return
+        if generation != self._setpoint_generation or not self.available:
+            return
+        actual = self.shared.get("target_temperature")
+        if isinstance(actual, (int, float)) and abs(actual - expected) > 0.26:
+            LOGGER.debug(
+                "Thermostat %s cloud setpoint still syncing: requested %s, reported %s",
+                self.serial[-4:], expected, actual,
+            )
