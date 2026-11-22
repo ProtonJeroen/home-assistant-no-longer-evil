@@ -18,8 +18,11 @@ from .entity import ThermostatEntity, discover_entities
 
 READ_MODES = {
     "heat": HVACMode.HEAT,
+    "heating": HVACMode.HEAT,
     "cool": HVACMode.COOL,
+    "cooling": HVACMode.COOL,
     "range": HVACMode.HEAT_COOL,
+    "heat-cool": HVACMode.HEAT_COOL,
     "off": HVACMode.OFF,
 }
 WRITE_MODES = {
@@ -90,7 +93,7 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
     @property
     def hvac_mode(self):
         mode = READ_MODES.get(
-            str(self.shared.get("target_temperature_type", "")).lower()
+            str(self.shared.get("target_temperature_type", "")).strip().lower()
         )
         # Reflect the real mode even when cooling controls are restricted.
         return mode
@@ -177,25 +180,42 @@ class ThermostatClimate(ThermostatEntity, ClimateEntity):
             raise HomeAssistantError("Temperature must be between 4.5 and 32 Celsius")
         return value
 
+    def _reject_unsupported_mode(self, mode):
+        """Record safe mode diagnostics without logging device payloads."""
+        raw = self.shared.get("target_temperature_type")
+        # Log a bounded, sanitized mode label, never arbitrary API content.
+        raw_label = str(raw).strip().lower()
+        if raw_label not in READ_MODES and raw_label != "":
+            raw_label = "<unrecognized>"
+        LOGGER.warning(
+            "Thermostat %s rejected setpoint: raw_mode=%s, parsed_mode=%s, "
+            "allowed_modes=%s, heating_only=%s",
+            self.serial[-4:], raw_label or "<missing>", mode,
+            [str(value) for value in self.hvac_modes], self.heating_only,
+        )
+        if self.heating_only and mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
+            raise HomeAssistantError(
+                "Thermostat reports cooling mode while heating-only is enabled. "
+                "Select Heat on the thermostat before changing the setpoint."
+            )
+        raise HomeAssistantError("HVAC mode is not supported by this thermostat")
+
     async def async_set_temperature(self, **kwargs):
         explicit_mode = kwargs.get("hvac_mode")
         mode = explicit_mode if explicit_mode is not None else self.hvac_mode
         if mode not in self.hvac_modes and explicit_mode is None:
-            # A cached cloud snapshot may contain an old COOL/OFF mode after
-            # the physical thermostat was changed back to HEAT. Refresh once
-            # before rejecting a dashboard setpoint command.
+            # Refresh once to rule out a stale cloud snapshot. Never infer
+            # HEAT from heating-only configuration or silently switch modes.
             try:
                 await self.coordinator.async_request_refresh()
             except Exception as err:
-                LOGGER.debug("Could not refresh HVAC mode before setpoint: %s", type(err).__name__)
+                LOGGER.debug(
+                    "Could not refresh HVAC mode before setpoint: %s",
+                    type(err).__name__,
+                )
             mode = self.hvac_mode
         if mode not in self.hvac_modes:
-            if self.heating_only and mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
-                raise HomeAssistantError(
-                    "Thermostat reports cooling mode while heating-only is enabled. "
-                    "Select Heat on the thermostat before changing the setpoint."
-                )
-            raise HomeAssistantError("HVAC mode is not supported by this thermostat")
+            self._reject_unsupported_mode(mode)
         if mode == HVACMode.HEAT_COOL:
             low = self._temperature(kwargs.get("target_temp_low"))
             high = self._temperature(kwargs.get("target_temp_high"))

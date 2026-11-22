@@ -398,3 +398,38 @@ async def test_explicit_unsupported_cool_mode_is_not_rewritten():
         await entity.async_set_temperature(temperature=21, hvac_mode=HVACMode.COOL)
     entity.coordinator.async_request_refresh.assert_not_awaited()
     entity.coordinator.api.command.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("heat", HVACMode.HEAT),
+        (" Heating ", HVACMode.HEAT),
+        ("cooling", HVACMode.COOL),
+        ("heat-cool", HVACMode.HEAT_COOL),
+    ],
+)
+def test_known_mode_labels_are_normalized(raw, expected):
+    entity = climate({"target_temperature_type": raw})
+    assert entity.hvac_mode == expected
+
+
+async def test_heating_alias_can_set_target_with_heating_only():
+    entity = climate({"target_temperature_type": "Heating", "target_temperature": 21})
+    entity.coordinator.config_entry.options = {"heating_only": ["s"]}
+    await entity.async_set_temperature(temperature=21.5)
+    entity.coordinator.api.command.assert_awaited_once_with(
+        "id", "temperature", {"value": 21.5, "mode": "heat", "scale": "C"}
+    )
+    entity.coordinator.async_request_refresh.assert_not_awaited()
+
+
+async def test_unknown_mode_logs_safe_diagnostic_without_sending_command(caplog):
+    entity = climate({"target_temperature_type": "unsupported-private-value"})
+    entity.coordinator.config_entry.options = {"heating_only": ["s"]}
+    with pytest.raises(HomeAssistantError, match="HVAC mode is not supported"):
+        await entity.async_set_temperature(temperature=21.5)
+    entity.coordinator.api.command.assert_not_awaited()
+    assert "raw_mode=<unrecognized>" in caplog.text
+    assert "unsupported-private-value" not in caplog.text
+    assert "heating_only=True" in caplog.text
